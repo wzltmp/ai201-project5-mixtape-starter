@@ -195,3 +195,13 @@ Exactly the position-7 song ("Free Throws") is missing; the other six come back 
 **The root cause:** A one-to-many join with no purpose. Joining `Song` to `song_tags` multiplies each matching song by its number of tag rows (3 tags → 3 result rows), and the query never filters or selects anything from the joined table — so the join contributes duplication and nothing else. Whether users *see* the duplicates depends on the execution style: the legacy `Query` API happens to deduplicate entities, so on this exact library version the bug hides; the moment the same query runs without that safety net (2.0-style execution, `.count()`, `LIMIT`-based pagination) each multi-tag song appears once per tag — matching the reported "keeps showing up twice."
 
 **My fix and side-effect check:** Removed the `outerjoin` (and the now-unused `song_tags` import) from `search_songs()` (`services/search_service.py`) — the filter is entirely on `Song` columns, so the query needs no second table; this eliminates the fan-out at its source instead of papering over it with `.distinct()`. Side-effect checks: `query.count()` and `len(query.all())` now agree (1 for "Crown Heights Anthem"); API results are byte-identical for tagged, untagged, and multi-tag songs, *including* the `tags` list in each result (proving the join was never needed for tag serialization — the `lazy="subquery"` relationship does that); all 5 search tests pass, full suite green; `search_songs`'s only caller is `routes/songs.py:search`.
+
+---
+
+## Stretch: Regression Test
+
+**`tests/test_notifications.py`** — regression coverage for Issue #4, the only fixed bug the starter suite had no test for (issues #1 and #5 were already covered by `test_streaks.py` and `test_playlists.py`).
+
+**What it verifies:** `test_rating_a_friends_song_notifies_the_sharer` asserts that after `rate_song(rater, song, 4)` on a song shared by someone else, exactly one `song_rated` notification exists for the sharer, naming the rater, the song title, and the score. A companion test, `test_rating_own_song_does_not_notify`, pins the guard behavior: self-ratings must not generate self-notifications.
+
+**Why it would have failed against the buggy code:** the pre-fix `rate_song()` persisted the `Rating` and returned without ever calling `create_notification()`, so the sharer's notification query returns an empty list and the `len(notifications) == 1` assertion fails. Proven, not assumed — I checked out the pre-fix `services/notification_service.py` (commit `4ea5cfb`) and ran the test: `1 failed` (the notification assertion), then restored the fixed version: `2 passed`. Full suite after adding the tests: **15 passed**.
