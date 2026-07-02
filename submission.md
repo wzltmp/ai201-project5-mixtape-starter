@@ -92,4 +92,68 @@ Hypotheses formed while reading (to be confirmed by reproduction before any fix,
 
 ## Root Cause Analyses
 
-*(To be completed in Milestone 2+ — one entry per fixed bug, one commit per fix.)*
+*(M2 status: reproduction fields completed for the three chosen bugs. Root cause / fix / verification fields land with each fix commit in M3.)*
+
+### Issue #1 — My listening streak keeps resetting
+
+**The issue as reported:** Users' listening streaks reset even when they listen on consecutive days.
+
+**How I reproduced it:** The buggy branch only executes when *today* is a Sunday, so it can't be triggered through the live API on an arbitrary day (I did this milestone on a Thursday) — the app state needed is a `last_listened_at` of yesterday *and* a current date falling on Sunday. I reproduced it by calling `update_listening_streak()` directly with controlled `now` values against an in-memory DB, with a control case to isolate the condition:
+
+```
+tue_to_wed: Tue 2026-06-30 streak=1 -> Wed 2026-07-01 streak=2 (expected 2, ok)
+sat_to_sun: Sat 2026-06-27 streak=1 -> Sun 2026-06-28 streak=1 (expected 2, BUG)
+```
+
+Consecutive weekday listens increment correctly; the identical sequence crossing Saturday→Sunday resets to 1. This matches the "keeps resetting" phrasing — it silently eats the streak once a week. The starter suite already encodes the expectation: `tests/test_streaks.py::test_streak_increments_on_sunday` fails on the untouched repo with `assert 1 == 2`.
+
+**Root cause:** *(M3)*
+
+**The fix:** *(M3)*
+
+**How I verified it:** *(M3)*
+
+### Issue #4 — Notified on playlist-add but not on rating
+
+**The issue as reported:** A user got a notification when a friend added their shared song to a playlist, but not when a friend rated their song.
+
+**How I reproduced it:** Live API, seeded DB. Baseline: `GET /users/<nova>/notifications` returns `count: 1` — the seeded `song_added_to_playlist` notification, proving the notification pipeline works for playlist adds. Then darius rates nova's shared song:
+
+```
+POST /songs/155016c2…/rate  {"user_id": "<darius>", "score": 5}   → HTTP 201, Rating persisted
+GET  /users/<nova>/notifications                                   → count: 1, types: ['song_added_to_playlist']
+```
+
+The rating succeeds and is stored, but nova's notification list is unchanged — no `song_rated` entry appears. Action works, side effect is absent.
+
+**Root cause:** *(M3)*
+
+**The fix:** *(M3)*
+
+**How I verified it:** *(M3)*
+
+### Issue #5 — The last song in a playlist never shows up
+
+**The issue as reported:** Whatever song is last in a playlist is missing from the playlist view.
+
+**How I reproduced it:** Compared DB ground truth against the API response for the seeded playlist "Late Night Vibes". Direct query of `playlist_entries` shows **7** entries, positions 1–7, with "Free Throws" at position 7. The endpoint:
+
+```
+GET /playlists/9e3c0f65…/songs → count: 6
+titles: [Midnight Drive, Still Waters, First Light, Block Party, Late Night Session, Golden Hour]
+```
+
+Exactly the position-7 song ("Free Throws") is missing; the other six come back in position order. Reproduces on every playlist regardless of size. The starter suite also encodes it: `tests/test_playlists.py::test_playlist_returns_all_songs` (gets 4, expects 5) and `test_playlist_returns_songs_in_order` both fail on the untouched repo.
+
+**Root cause:** *(M3)*
+
+**The fix:** *(M3)*
+
+**How I verified it:** *(M3)*
+
+### Stretch bugs — reproduction notes (#2, #3)
+
+Captured while in reproduction mode, ahead of the stretch fixes:
+
+- **#2 (feed shows people from yesterday):** `GET /feed/<kenji>/listening-now` returns nova "listening now" a song she actually played **2.3 hours earlier** (seeded event). aaliya's 34-hour-old event is excluded by the current 24 h cutoff — so the window works, it's just far too wide to mean "now".
+- **#3 (duplicate search results):** the search query's `outerjoin` to `song_tags` fans out at the SQL level — for the 3-tag song "Crown Heights Anthem", `query.count()` = **3 raw rows** while `.all()` returns **1 entity**. The duplicates are currently masked by SQLAlchemy's legacy `Query` entity-deduplication (2.0.51), so the live API shows `count: 1`; on any code path without that dedup (2.0-style `select()`, counts, pagination) the same query triples the song. Reproduction is SQL-level by necessity.
