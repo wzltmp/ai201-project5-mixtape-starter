@@ -1,5 +1,26 @@
 # Project 5: Mixtape Bug Hunt — Submission
 
+## AI Tool Usage
+
+I used Claude Code throughout, under one governing rule: **the AI generates evidence and counterarguments faster than I could alone, but the judgment calls — what the root cause actually is, what the fix should be — stay with me, verified on real output** (test runs, API responses, direct DB queries), never on the AI's prose alone. The standing question for every claim it made: *did we run it, or did it just say it?*
+
+**Codebase navigation.** The AI gave me a navigation method, not just answers: symptom → route → service → the specific line. Prompts that paid off during orientation:
+
+- *"Explain why `playlist.songs.append(song)` causes a 500."* — surfaced that a plain many-to-many relationship can't populate the association table's required `position`/`added_by` columns; we then confirmed the `IntegrityError` against the live app before writing it into the codebase map.
+- *"Trace one request end-to-end: `POST /songs/<id>/listen` from Flask's URL routing through blueprint, service, session, commit, and back to JSON."* — I had traced route→service; the full lifecycle (where the DB session comes from, when the transaction actually commits) is the level below, and it's where the streak bug's single-commit design became clear.
+- *"Summarize the known issues in this codebase that are **not** among the five tracked bugs."* — produced a "here's what I'd file next" list: the position-less playlist append 500, the N+1 queries in the feed loops, and notification bodies baking usernames in at write time.
+
+**Debugging.** Two AI-assisted techniques did the heavy lifting, both reusable: the **working/broken sibling diff** (issue #4 — compare `add_to_playlist()`, which notifies, against `rate_song()`, which doesn't, and explain every difference) and the **controlled-clock experiment** (issue #1 — the Sunday branch was unreachable through the live API on a Thursday, so we called `update_listening_streak()` directly with a Sat→Sun sequence plus a Tue→Wed control case).
+
+**What it helped me understand most** wasn't any single bug: it was the difference between a symptom and a mechanism (not "streaks reset" but "a rejected increment falls through to an `else` that actively writes 1"), and that observed behavior can contradict a correct reading of the code — issue #3's duplicate rows exist at the SQL level but are invisible in the API output.
+
+**Where I had to verify things myself, or the AI was wrong or incomplete:**
+
+- **It made a real error:** during a cleanup script it caused a `StaleDataError` by double-deleting an association row (deleting from `playlist_entries` manually, then letting the ORM cascade attempt the same delete). I investigated the traceback and reviewed the corrected cleanup myself rather than accepting its next suggestion blind.
+- **It guessed data wrong:** while planning the issue #5 reproduction it asserted the last song in "Late Night Vibes" was "First Light"; the actual `playlist_entries` query said "Free Throws" at position 7. Small, but it set my rule that AI claims about *data* get checked against the DB before they enter this document.
+- **Its explanation was incomplete without an experiment:** its account of why issue #3's duplicates are masked rests on a library-behavior claim from memory (legacy `Query` entity-deduplication in SQLAlchemy). We grounded the observable half by experiment — `query.count()` = 3 vs `len(query.all())` = 1 — and I treat the mechanism's naming as something to confirm against SQLAlchemy's docs before citing it in a graded RCA.
+- **It would have pointed me wrong on intent:** for issue #2 it cannot know the intended "listening now" window — its suggestion (~30 minutes) is an inference from seed-data comments, delivered as confidently as its verified claims. The project brief's issue description is the authority there; this is the clearest case where trusting a fluent AI default over the actual spec would have produced a wrong fix.
+
 ## Milestone 1 — Codebase Map
 
 ### How the app is put together
@@ -92,7 +113,7 @@ Hypotheses formed while reading (to be confirmed by reproduction before any fix,
 
 ## Root Cause Analyses
 
-*(M2 status: reproduction fields completed for the three chosen bugs. Root cause / fix / verification fields land with each fix commit in M3.)*
+*(One entry per fixed bug, all five fields complete; each fix is its own `fix:` commit on `bugfix/mixtape`.)*
 
 ### Issue #1 — My listening streak keeps resetting
 
