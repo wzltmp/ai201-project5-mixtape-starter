@@ -145,11 +145,11 @@ titles: [Midnight Drive, Still Waters, First Light, Block Party, Late Night Sess
 
 Exactly the position-7 song ("Free Throws") is missing; the other six come back in position order. Reproduces on every playlist regardless of size. The starter suite also encodes it: `tests/test_playlists.py::test_playlist_returns_all_songs` (gets 4, expects 5) and `test_playlist_returns_songs_in_order` both fail on the untouched repo.
 
-**Root cause:** *(M3)*
+**How I found the root cause:** Started from the symptom's endpoint: `GET /playlists/<id>/songs` → `routes/playlists.py:get_songs()`, which only calls `playlist_service.get_playlist_songs()` and reports `len()` of whatever comes back — so the loss had to be in the service. Read `get_playlist_songs()` top-down: the query (join `Song` ↔ `playlist_entries`, filter by playlist, `order_by(asc(position))`) is correct — I verified that by running the same query directly and getting all 7 rows. The confidence moment was the return line: `[song.to_dict() for song in songs[:-1]]`. The `[:-1]` slice explains the evidence exactly — DB says 7, API says 6, and the missing song is always the *highest position*, because the list is sorted ascending by position before the slice cuts the tail.
 
-**The fix:** *(M3)*
+**The root cause:** Python's `list[:-1]` slice means "everything except the last element." `get_playlist_songs()` built the correct, position-ordered list of songs and then returned `songs[:-1]`, unconditionally discarding the final element. Since the list is sorted ascending by `playlist_entries.position`, the discarded element is always the most recently positioned song — hence "the last song in a playlist never shows up," for every playlist, every time. (Likely a leftover from debugging or a mistaken attempt to trim something; the function's own docstring says "returns all songs in the playlist.")
 
-**How I verified it:** *(M3)*
+**My fix and side-effect check:** Changed the return to `[song.to_dict() for song in songs]` — removing only the slice (`services/playlist_service.py:66`). The query and ordering logic were already correct, so nothing else needed to change. Side-effect checks: (1) the seeded 7-song playlist now returns `count: 7` with "Free Throws" present and titles still in position order; (2) boundary both sides — a 1-song playlist returns 1 song (previously 0 — the old code's worst case) and an empty playlist still returns `[]` (unaffected before and after, since `[][:-1] == []`); (3) `get_playlist_songs`'s only caller is `routes/playlists.py:get_songs`, so no other feature consumes this list; (4) full test suite: both previously-failing playlist tests now pass, and nothing else regressed (went from 3 failed/10 passed to 1 failed/12 passed — the remaining failure is Issue #1's Sunday test, fixed next).
 
 ### Stretch bugs — reproduction notes (#2, #3)
 
