@@ -126,11 +126,11 @@ GET  /users/<nova>/notifications                                   → count: 1,
 
 The rating succeeds and is stored, but nova's notification list is unchanged — no `song_rated` entry appears. Action works, side effect is absent.
 
-**Root cause:** *(M3)*
+**How I found the root cause:** The issue names two actions with different outcomes, which gave me a working/broken pair to diff. Both live in the same file: `routes/playlists.py:add_song()` → `notification_service.add_to_playlist()` (notifies) and `routes/songs.py:rate()` → `notification_service.rate_song()` (doesn't). Read them side by side: `add_to_playlist()` ends with a guarded `create_notification(user_id=song.shared_by, notification_type="song_added_to_playlist", ...)`; `rate_song()` validates, upserts the `Rating`, commits, and returns — no notification call anywhere on the path (confirmed by grepping `create_notification` callers: exactly one, in `add_to_playlist`). Two things made me confident this was a missing step rather than intended behavior: the module docstring says notifications are generated "when friends interact with a user's shared songs" (rating is such an interaction), and `create_notification()`'s own docstring lists `'song_rated'` as an example type — a type string nothing in the codebase ever created.
 
-**The fix:** *(M3)*
+**The root cause:** Not a wrong condition but a missing step: `rate_song()` persists the rating and stops. The notification write that its sibling `add_to_playlist()` performs — and that the `'song_rated'` type was clearly reserved for — was never implemented, so the sharer's notification list is untouched no matter who rates their song.
 
-**How I verified it:** *(M3)*
+**My fix and side-effect check:** Appended the sibling's exact pattern to `rate_song()` after the rating commit (`services/notification_service.py`): if `song.shared_by != user_id`, call `create_notification(user_id=song.shared_by, notification_type="song_rated", body="<rater> rated your song '<title>' <score>/5.")`. The guard mirrors `add_to_playlist`'s "don't notify yourself" check; deliberately, a *re-rating* also notifies (consistent with `add_to_playlist`, which notifies on repeat adds — smallest change, no new conditional structure). Side-effect checks via test client: new rating → 201 and the sharer gains a `song_rated` notification with correct body; re-rating → still one `Rating` row per user+song (unique-constraint upsert intact, score updated 5→3) and a notification; self-rating → saved but **no** notification; score 6 still rejected with 400; the new notifications appear in `unread_only=true` and `mark_as_read` clears them. Full suite: 13/13 (no existing test covers notifications, so no regressions possible there; rating behavior verified manually as above).
 
 ### Issue #5 — The last song in a playlist never shows up
 
