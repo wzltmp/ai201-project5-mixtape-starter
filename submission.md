@@ -1,5 +1,9 @@
 # Project 5: Mixtape Bug Hunt — Submission
 
+## Commit History
+
+![git log --oneline on bugfix/mixtape](docs/screenshots/git-log-checkpoint.png)
+
 ## AI Tool Usage
 
 I used Claude Code throughout, under one governing rule: **the AI generates evidence and counterarguments faster than I could alone, but the judgment calls — what the root cause actually is, what the fix should be — stay with me, verified on real output** (test runs, API responses, direct DB queries), never on the AI's prose alone. The standing question for every claim it made: *did we run it, or did it just say it?*
