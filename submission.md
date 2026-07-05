@@ -1,5 +1,7 @@
 # Project 5: Mixtape Bug Hunt — Submission
 
+**Repository (branch):** https://github.com/wzltmp/ai201-project5-mixtape-starter/tree/bugfix/mixtape
+
 ## Commit History
 
 ![git log --oneline on bugfix/mixtape](docs/screenshots/git-log-checkpoint.png)
